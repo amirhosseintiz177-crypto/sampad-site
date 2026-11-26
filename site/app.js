@@ -29,6 +29,37 @@
     },
   };
 
+  function teacherStorageKey(kind, user = state.user) {
+    const nationalId = normalizeDigits(user?.nationalId || "");
+    return nationalId ? `sampad.teacher.${nationalId}.${kind}` : "";
+  }
+  function readTeacherFilters() {
+    try {
+      const key = teacherStorageKey("filters");
+      return key ? JSON.parse(localStorage.getItem(key) || "{}") : {};
+    } catch { return {}; }
+  }
+  function saveTeacherFilters() {
+    const key = teacherStorageKey("filters");
+    if (!key || !state.user || state.user.role !== "teacher") return;
+    try {
+      localStorage.setItem(key, JSON.stringify({
+        classId: $("#class-select")?.value || "",
+        subjectId: $("#subject-select")?.value || "",
+        academicYear: $("#academic-year")?.value || "",
+        reportType: $("#report-topic")?.value || "",
+      }));
+    } catch { /* Private browsing or storage limits: keep the session usable. */ }
+  }
+  function tourSeen() {
+    const key = teacherStorageKey("tour-seen");
+    try { return !!key && localStorage.getItem(key) === "1"; } catch { return false; }
+  }
+  function markTourSeen() {
+    const key = teacherStorageKey("tour-seen");
+    try { if (key) localStorage.setItem(key, "1"); } catch { /* Ignore unavailable local storage. */ }
+  }
+
   const esc = (value) =>
     String(value ?? "").replace(/[&<>"']/g, (character) => ({
       "&": "&amp;",
@@ -220,6 +251,16 @@
           select.value = state.classes[0].id;
           updateSubjects();
         }
+        const saved = readTeacherFilters();
+        if (state.classes.some((item) => item.id === saved.classId)) {
+          select.value = saved.classId;
+          updateSubjects();
+          if ([...$("#subject-select").options].some((option) => option.value === saved.subjectId))
+            $("#subject-select").value = saved.subjectId;
+        }
+        if (saved.academicYear) $("#academic-year").value = saved.academicYear.slice(0, 40);
+        if (saved.reportType) $("#report-topic").value = saved.reportType.slice(0, 120);
+        saveTeacherFilters();
       } catch (error) {
         toast(error.message, "error");
       }
@@ -933,7 +974,7 @@
   ];
 
   function offerTour() {
-    if (state.tourOffered || !$("#tour-consent")?.showModal) return;
+    if (state.tourOffered || tourSeen() || !$("#tour-consent")?.showModal) return;
     state.tourOffered = true;
     $("#tour-consent").showModal();
   }
@@ -950,6 +991,7 @@
     $("#tour").hidden = false;
     $("#tour-backdrop").hidden = false;
     const finish = () => {
+      markTourSeen();
       $(".tour-focus")?.classList.remove("tour-focus");
       $("#tour").hidden = true;
       $("#tour-backdrop").hidden = true;
@@ -1041,6 +1083,10 @@
   $("#login-form").onsubmit = login;
   $("#register-form").onsubmit = register;
   $("#class-select").onchange = updateSubjects;
+  $("#class-select").addEventListener("change", saveTeacherFilters);
+  $("#subject-select").addEventListener("change", saveTeacherFilters);
+  $("#academic-year").addEventListener("input", saveTeacherFilters);
+  $("#report-topic").addEventListener("input", saveTeacherFilters);
   $("#load-roster").onclick = loadRoster;
   $("#roster").addEventListener("input", markDirty);
   $("#save-scores").onclick = saveScores;
@@ -1088,6 +1134,7 @@
     const action = event.submitter?.value || "no";
     $("#tour-consent").close();
     if (action === "yes") startTour();
+    else markTourSeen();
   };
 
   document.addEventListener("submit", (event) => {

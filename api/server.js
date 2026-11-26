@@ -1402,6 +1402,10 @@ app.patch("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, 
   const user = await Teacher.findById(req.params.id);
   if (!user) return res.status(404).json({ error: "کاربر پیدا نشد." });
   const before = {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    nationalId: user.nationalId,
+    phone: user.phone,
     active: user.active,
     role: user.role,
     assignments: user.assignments.map((item) => ({
@@ -1411,6 +1415,32 @@ app.patch("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, 
     })),
   };
   const patch = {};
+  for (const key of ["firstName", "lastName"]) {
+    if (req.body?.[key] === undefined) continue;
+    const value = cleanText(req.body[key], 80);
+    if (value.length < 2) return res.status(400).json({ error: "نام و نام خانوادگی باید دست‌کم دو نویسه باشند." });
+    patch[key] = value;
+  }
+  if (req.body?.phone !== undefined) {
+    const phone = cleanText(req.body.phone, 24);
+    if (phone.length < 8) return res.status(400).json({ error: "شمارهٔ تماس معتبر نیست." });
+    patch.phone = phone;
+  }
+  if (req.body?.nationalId !== undefined) {
+    const nationalId = normalizeDigits(req.body.nationalId);
+    if (!/^\d{10}$/.test(nationalId)) return res.status(400).json({ error: "کد ملی باید ده رقم باشد." });
+    if (user.role === "admin" && String(user._id) === String(req.user._id) && nationalId !== user.nationalId) {
+      return res.status(409).json({ error: "برای حفظ حساب اتصال مدیر، کد ملی مدیر جاری از این بخش تغییر نمی‌کند." });
+    }
+    patch.nationalId = nationalId;
+  }
+  if (req.body?.newPassword !== undefined && req.body.newPassword !== "") {
+    if (typeof req.body.newPassword !== "string" || req.body.newPassword.length < 6 || req.body.newPassword.length > 128) {
+      return res.status(400).json({ error: "رمز تازه باید بین ۶ تا ۱۲۸ نویسه باشد." });
+    }
+    patch.passwordHash = await argon2.hash(req.body.newPassword, ARGON_OPTIONS);
+    patch.tokenVersion = Number(user.tokenVersion || 0) + 1;
+  }
   if (typeof req.body?.active === "boolean") patch.active = req.body.active;
   if (req.body?.role !== undefined) {
     if (!["admin", "teacher"].includes(req.body.role)) {
@@ -1457,11 +1487,18 @@ app.patch("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, 
       return res.status(409).json({ error: "حداقل یک مدیر فعال باید باقی بماند." });
     }
   }
-  Object.assign(user, patch);
-  await user.save();
+  try {
+    Object.assign(user, patch);
+    await user.save();
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ error: "این کد ملی برای حساب دیگری ثبت شده است." });
+    throw error;
+  }
   await AdminAudit.create({
     action:
-      patch.active !== undefined
+      patch.firstName !== undefined || patch.lastName !== undefined || patch.nationalId !== undefined || patch.phone !== undefined || patch.passwordHash !== undefined
+        ? "account_updated"
+        : patch.active !== undefined
         ? patch.active
           ? "account_activated"
           : "account_deactivated"
@@ -1473,6 +1510,10 @@ app.patch("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, 
     summary: `${user.firstName} ${user.lastName}`,
     oldValue: before,
     newValue: {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      nationalId: user.nationalId,
+      phone: user.phone,
       active: user.active,
       role: user.role,
       assignments: user.assignments.map((item) => ({
@@ -1486,6 +1527,40 @@ app.patch("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, 
     actorName: `${req.user.firstName} ${req.user.lastName}`,
   });
   res.json({ user: publicTeacher(user) });
+});
+
+app.delete("/api/admin/teachers/:id", auth, adminOnly, writeLimiter, async (req, res) => {
+  const user = await Teacher.findById(req.params.id);
+  if (!user) return res.status(404).json({ error: "کاربر پیدا نشد." });
+  if (String(user._id) === String(req.user._id)) {
+    return res.status(409).json({ error: "مدیر واردشده نمی‌تواند حساب خودش را حذف کند." });
+  }
+  if (user.role === "admin") {
+    const activeAdmins = await Teacher.countDocuments({ role: "admin", active: true });
+    if (user.active && activeAdmins <= 1) {
+      return res.status(409).json({ error: "حذف آخرین مدیر فعال مجاز نیست." });
+    }
+  }
+  await AdminAudit.create({
+    action: "account_deleted",
+    targetType: "teacher",
+    targetId: String(user._id),
+    summary: `${user.firstName} ${user.lastName} · ${user.nationalId}`,
+    oldValue: {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      nationalId: user.nationalId,
+      phone: user.phone,
+      role: user.role,
+      active: user.active,
+    },
+    newValue: null,
+    result: "saved",
+    actorId: req.user._id,
+    actorName: `${req.user.firstName} ${req.user.lastName}`,
+  });
+  await user.deleteOne();
+  res.json({ ok: true });
 });
 
 app.get("/api/admin/audit", auth, adminOnly, async (req, res) => {
@@ -2515,7 +2590,7 @@ app.get("/tour", (_req, res) => res.sendFile(path.join(__dirname, "..", "site", 
 app.get("/teachers", (_req, res) => res.sendFile(path.join(__dirname, "..", "site", "index.html")));
 app.use(
   express.static(path.join(__dirname, "..", "site"), {
-    index: "index.html",
+    index: false,
     maxAge: process.env.NODE_ENV === "production" ? "1h" : 0,
   }),
 );
