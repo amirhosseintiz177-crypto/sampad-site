@@ -509,16 +509,19 @@ app.post("/api/register", enrollmentLimiter, async (req, res) => {
 });
 
 async function performLogin(req, res, allowedRole) {
-  const nationalId = normalizeDigits(req.body?.nationalId);
+  const loginName = String(req.body?.username ?? req.body?.nationalId ?? "").trim();
+  const nationalId = normalizeDigits(loginName);
   const password = String(req.body?.password || "");
-  const user = await Teacher.findOne({ nationalId }).select("+passwordHash");
+  const user = !allowedRole && loginName.toLowerCase() === "sampad"
+    ? await Teacher.findOne({ role: "admin", active: true }).select("+passwordHash")
+    : await Teacher.findOne({ nationalId }).select("+passwordHash");
   const valid =
     !!user &&
     user.active &&
     (!allowedRole || user.role === allowedRole) &&
     password.length <= 128 &&
     (await argon2.verify(user.passwordHash, password).catch(() => false));
-  if (!valid) return res.status(401).json({ error: "کد ملی یا رمز عبور درست نیست." });
+  if (!valid) return res.status(401).json({ error: "نام کاربری/کد ملی یا رمز عبور درست نیست." });
   user.lastSeenAt = new Date();
   user.lastLoginAt = new Date();
   user.loginCount = Number(user.loginCount || 0) + 1;
@@ -570,7 +573,7 @@ app.patch("/api/me", auth, writeLimiter, async (req, res) => {
 app.post("/api/me/password", auth, writeLimiter, async (req, res) => {
   const parsed = passwordSchema.safeParse(req.body || {});
   if (!parsed.success) {
-    return res.status(400).json({ error: "رمز تازه باید دست‌کم ۱۲ نویسه داشته باشد." });
+    return res.status(400).json({ error: "رمز تازه باید دست‌کم ۶ نویسه داشته باشد." });
   }
   const user = await Teacher.findById(req.user._id).select("+passwordHash");
   const valid = await argon2.verify(user.passwordHash, parsed.data.currentPassword).catch(() => false);

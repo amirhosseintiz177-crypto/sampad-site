@@ -843,7 +843,10 @@
     button.disabled = true;
     try {
       const data = Object.fromEntries(new FormData(form));
-      await api("/api/teacher/login", { method: "POST", body: JSON.stringify(data) });
+      const endpoint = String(data.nationalId || "").trim().toLowerCase() === "sampad"
+        ? "/api/login"
+        : "/api/teacher/login";
+      await api(endpoint, { method: "POST", body: JSON.stringify(data) });
       await init();
     } catch (error) {
       formError(form, error.message);
