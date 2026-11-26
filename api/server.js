@@ -69,6 +69,52 @@ const ARGON_OPTIONS = {
   parallelism: 1,
 };
 
+async function ensureInitialAdmin() {
+  if (String(process.env.ADMIN_AUTO_PROVISION || "").toLowerCase() !== "true") return;
+
+  const nationalId = String(process.env.ADMIN_NATIONAL_ID || "").trim();
+  const phone = String(process.env.ADMIN_PHONE || "").trim();
+  const password = String(process.env.ADMIN_PASSWORD || "");
+  if (!/^\d{10}$/.test(nationalId) || /^0+$/.test(nationalId)) {
+    throw new Error("ADMIN_AUTO_PROVISION requires a real 10-digit ADMIN_NATIONAL_ID");
+  }
+  if (!phone || /^0+$/.test(phone.replace(/\D/g, ""))) {
+    throw new Error("ADMIN_AUTO_PROVISION requires ADMIN_PHONE");
+  }
+  if (/^REPLACE_/i.test(password) || password.length < 6) {
+    throw new Error("ADMIN_AUTO_PROVISION requires ADMIN_PASSWORD of at least 6 characters");
+  }
+
+  const adminCount = await Teacher.countDocuments({ role: "admin" });
+  if (adminCount > 1) throw new Error("Multiple admin accounts exist; automatic provisioning stopped");
+  const admin = await Teacher.findOne({ role: "admin" });
+  if (admin) {
+    if (admin.nationalId !== nationalId) {
+      throw new Error("ADMIN_NATIONAL_ID does not match the existing admin; automatic provisioning made no changes");
+    }
+    if (!admin.active) {
+      admin.active = true;
+      admin.tokenVersion = Number(admin.tokenVersion || 0) + 1;
+      await admin.save();
+      console.log("Activated the matching initial admin account.");
+    }
+    return;
+  }
+
+  const passwordHash = await argon2.hash(password, ARGON_OPTIONS);
+  await Teacher.create({
+    firstName: process.env.ADMIN_FIRST_NAME || "مدیر",
+    lastName: process.env.ADMIN_LAST_NAME || "مدرسه",
+    nationalId,
+    phone,
+    passwordHash,
+    role: "admin",
+    active: true,
+    assignments: [],
+  });
+  console.log("Created the initial admin from Render environment settings.");
+}
+
 const required = ["MONGODB_URI", "JWT_SECRET"];
 for (const key of required) {
   if (!process.env[key] || String(process.env[key]).startsWith("REPLACE_")) {
@@ -2613,6 +2659,7 @@ async function start(port = DEFAULT_PORT, host = DEFAULT_HOST) {
     serverSelectionTimeoutMS: 10000,
     autoIndex: false,
   });
+  await ensureInitialAdmin();
   const maxSequence = await normalizeLegacySequences();
   await backfillLegacyData();
   const models = [Teacher, Student, Report, ScoreAudit, AdminAudit, SyncChange, Counter, Config];
