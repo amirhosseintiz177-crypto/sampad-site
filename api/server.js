@@ -32,6 +32,7 @@ const APP_VERSION = (() => {
 })();
 const SESSION_COOKIE = "sampad_session";
 const SESSION_MS = 8 * 60 * 60 * 1000;
+const DESKTOP_MANAGER_CONNECT_PATH = "/api/manager-link/7d8f4c91b2e648a6";
 const IS_RENDER = process.env.RENDER === "true" || !!process.env.RENDER_EXTERNAL_URL;
 function parseHttpsOrigin(value) {
   try {
@@ -127,6 +128,13 @@ const enrollmentLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "درخواست‌های ثبت‌نام زیاد شده؛ کمی بعد دوباره تلاش کن." },
+});
+const managerConnectLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "تلاش‌های اتصال مدیر بیش از حد بود؛ کمی بعد دوباره تلاش کنید." },
 });
 const writeLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -508,8 +516,36 @@ app.post("/api/register", enrollmentLimiter, async (req, res) => {
   }
 });
 
+function matchesAdminEnvironmentPassword(candidate) {
+  const expected = String(process.env.ADMIN_PASSWORD || "");
+  if (expected.length < 6 || String(candidate || "").length > 128) return false;
+  const receivedDigest = crypto.createHash("sha256").update(String(candidate || ""), "utf8").digest();
+  const expectedDigest = crypto.createHash("sha256").update(expected, "utf8").digest();
+  return crypto.timingSafeEqual(receivedDigest, expectedDigest);
+}
+
+async function performEnvironmentAdminLogin(req, res) {
+  if (!process.env.ADMIN_PASSWORD || String(process.env.ADMIN_PASSWORD).length < 6) {
+    return res.status(503).json({ error: "رمز اتصال مدیر در تنظیمات سرور تعریف نشده است." });
+  }
+  if (!matchesAdminEnvironmentPassword(req.body?.password)) {
+    return res.status(401).json({ error: "رمز واردشده با مقدار ADMIN_PASSWORD سرور همخوان نیست." });
+  }
+  const user = await Teacher.findOne({ role: "admin", active: true }).select("+passwordHash");
+  if (!user) return res.status(503).json({ error: "حساب مدیر در پایگاه داده آماده نیست." });
+  user.lastSeenAt = new Date();
+  user.lastLoginAt = new Date();
+  user.loginCount = Number(user.loginCount || 0) + 1;
+  await user.save();
+  setSessionCookie(res, sessionToken(user));
+  return res.json({ user: publicTeacher(user) });
+}
+
 async function performLogin(req, res, allowedRole) {
   const loginName = String(req.body?.username ?? req.body?.nationalId ?? "").trim();
+  if (!allowedRole && loginName.toLowerCase() === "sampad") {
+    return performEnvironmentAdminLogin(req, res);
+  }
   const nationalId = normalizeDigits(loginName);
   const password = String(req.body?.password || "");
   const user = !allowedRole && loginName.toLowerCase() === "sampad"
@@ -531,6 +567,7 @@ async function performLogin(req, res, allowedRole) {
 }
 
 app.post("/api/login", authLimiter, async (req, res) => performLogin(req, res));
+app.post(DESKTOP_MANAGER_CONNECT_PATH, managerConnectLimiter, performEnvironmentAdminLogin);
 app.post("/api/teacher/login", authLimiter, async (req, res) =>
   performLogin(req, res, "teacher"),
 );

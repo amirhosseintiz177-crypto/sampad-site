@@ -41,7 +41,7 @@ async function seedAdmin() {
       admin.passwordHash = passwordHash;
       admin.tokenVersion = Number(admin.tokenVersion || 0) + 1;
       await admin.save();
-      console.log("Updated the matching admin password and invalidated existing sessions. Remove ADMIN_PASSWORD now.");
+      console.log("Updated the matching admin password and invalidated existing sessions. Keep ADMIN_PASSWORD configured for desktop connections.");
     } else {
       if (!ADMIN_PHONE || /^0+$/.test(ADMIN_PHONE.replace(/\D/g, ""))) {
         throw new Error("Set the admin phone number; the sample placeholder is not accepted");
@@ -56,7 +56,7 @@ async function seedAdmin() {
         active: true,
         assignments: [],
       });
-      console.log("Created the initial admin. Site admin sign-in name is sampad; remove ADMIN_PASSWORD now.");
+      console.log("Created the initial admin. Site admin sign-in name is sampad; keep ADMIN_PASSWORD configured for desktop connections.");
     }
   } finally {
     await mongoose.disconnect();
