@@ -32,6 +32,35 @@ const APP_VERSION = (() => {
 })();
 const SESSION_COOKIE = "sampad_session";
 const SESSION_MS = 8 * 60 * 60 * 1000;
+const IS_RENDER = process.env.RENDER === "true" || !!process.env.RENDER_EXTERNAL_URL;
+function parseHttpsOrigin(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (
+      url.protocol !== "https:" ||
+      !url.hostname ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+// PUBLIC_ORIGIN is the browser-visible HTTPS URL. Render's 0.0.0.0 value is
+// only a bind host; use Render's generated public URL if the app URL is unset
+// or was mistakenly set to a non-URL bind address.
+function getPublicOrigin() {
+  return parseHttpsOrigin(process.env.PUBLIC_ORIGIN) ||
+    (IS_RENDER ? parseHttpsOrigin(process.env.RENDER_EXTERNAL_URL) : null);
+}
+const PUBLIC_ORIGIN = getPublicOrigin();
+const TRUST_PROXY = process.env.TRUST_PROXY || "1";
+const DEFAULT_PORT = Number(process.env.PORT || (IS_RENDER ? 10000 : 8080));
+const DEFAULT_HOST = IS_RENDER ? "0.0.0.0" : (process.env.HOST || "127.0.0.1");
 const ARGON_OPTIONS = {
   type: argon2.argon2id,
   memoryCost: 19456,
@@ -49,25 +78,19 @@ if (Buffer.byteLength(String(process.env.JWT_SECRET)) < 48) {
   throw new Error("JWT_SECRET must contain at least 48 bytes");
 }
 if (process.env.NODE_ENV === "production") {
-  let publicOrigin;
-  try {
-    publicOrigin = new URL(String(process.env.PUBLIC_ORIGIN || ""));
-  } catch {
-    throw new Error("PUBLIC_ORIGIN must be a valid HTTPS origin in production");
+  if (!PUBLIC_ORIGIN) {
+    throw new Error("Set PUBLIC_ORIGIN to the public HTTPS site URL; on Render, RENDER_EXTERNAL_URL is used as a secure fallback.");
   }
-  if (publicOrigin.protocol !== "https:" || publicOrigin.pathname !== "/") {
-    throw new Error("PUBLIC_ORIGIN must contain only the HTTPS scheme and hostname");
+  if (process.env.COOKIE_SECURE === "false") {
+    throw new Error("COOKIE_SECURE cannot be false in production; secure cookies are required.");
   }
-  if (process.env.COOKIE_SECURE !== "true") {
-    throw new Error("COOKIE_SECURE must be true in production");
-  }
-  if (!Number.isInteger(Number(process.env.TRUST_PROXY)) || Number(process.env.TRUST_PROXY) < 1) {
+  if (!Number.isInteger(Number(TRUST_PROXY)) || Number(TRUST_PROXY) < 1) {
     throw new Error("TRUST_PROXY must match the number of trusted reverse proxies");
   }
 }
 
 app.disable("x-powered-by");
-app.set("trust proxy", Number(process.env.TRUST_PROXY || 1));
+app.set("trust proxy", Number(TRUST_PROXY));
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -324,13 +347,9 @@ const adminOnly = (req, res, next) =>
   req.user?.role === "admin" ? next() : res.status(403).json({ error: "دسترسی مدیر لازم است." });
 
 function sameOrigin(req, res, next) {
-  const allowed = process.env.PUBLIC_ORIGIN;
+  const allowedOrigin = getPublicOrigin();
   const origin = req.get("origin");
-  if (allowed && origin && origin !== "null") {
-    let allowedOrigin = allowed;
-    try {
-      allowedOrigin = new URL(allowed).origin;
-    } catch {}
+  if (allowedOrigin && origin && origin !== "null") {
     if (origin !== allowedOrigin) return res.status(403).json({ error: "مبدأ درخواست مجاز نیست." });
   }
   next();
@@ -342,7 +361,7 @@ function enforceHttps(req, res, next) {
     (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
   if (!active || req.secure) return next();
   if (req.path.startsWith("/api/")) return res.status(403).json({ error: "اتصال HTTPS الزامی است." });
-  const target = process.env.PUBLIC_ORIGIN || `https://${req.hostname}`;
+  const target = getPublicOrigin() || `https://${req.hostname}`;
   return res.redirect(308, `${target}${req.originalUrl}`);
 }
 
@@ -2549,7 +2568,7 @@ async function ensureSyncCounter(maxSequence = 0) {
   );
 }
 
-async function start(port = Number(process.env.PORT || 8080), host = process.env.HOST || "127.0.0.1") {
+async function start(port = DEFAULT_PORT, host = DEFAULT_HOST) {
   await mongoose.connect(process.env.MONGODB_URI, {
     serverSelectionTimeoutMS: 10000,
     autoIndex: false,
@@ -2582,4 +2601,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, start };
+module.exports = {
+  app,
+  start,
+  runtimeConfig: { isRender: IS_RENDER, publicOrigin: PUBLIC_ORIGIN, host: DEFAULT_HOST, port: DEFAULT_PORT },
+};

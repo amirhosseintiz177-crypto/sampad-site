@@ -1,6 +1,6 @@
 {
   "name": "sampad-teacher-portal",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "Sampad teacher portal and API for VPS deployment",
   "main": "api/server.js",
