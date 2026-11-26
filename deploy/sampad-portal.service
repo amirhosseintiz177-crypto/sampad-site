@@ -1,0 +1,25 @@
+[Unit]
+Description=Sampad teacher portal API
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sampad
+Group=sampad
+WorkingDirectory=/opt/sampad-portal
+EnvironmentFile=/opt/sampad-portal/.env
+ExecStart=/usr/bin/node /opt/sampad-portal/api/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sampad-portal
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

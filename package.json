@@ -1,0 +1,29 @@
+{
+  "name": "sampad-teacher-portal",
+  "version": "1.5.1",
+  "private": true,
+  "description": "Sampad teacher portal and API for VPS deployment",
+  "main": "api/server.js",
+  "scripts": {
+    "start": "node api/server.js",
+    "seed:admin": "node api/seed-admin.js",
+    "test": "node test/api.integration.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.9.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.4.3"
+  }
+}
